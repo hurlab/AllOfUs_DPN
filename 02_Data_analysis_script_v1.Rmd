@@ -1,0 +1,1446 @@
+---
+title: Risk Factors Associated with the Diabetic Peripheral Neuropathy in the All of Us Program
+author: "HUR Lab"
+date: "2025-08-15"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## This analysis examines the risk factors associated with diabetic peripheral neuropathy using data from the All of Us Research Program. These data are available only within the secure All of Us Researcher Workbench environment and require approved access through the National Institutes of Health (NIH). The script provided here is intended solely for transparency and reproducibility; it cannot be executed on a local computer because the underlying data are not publicly accessible. Researchers with appropriate authorization may adapt and run this script within the All of Us Researcher Workbench, ensuring compliance with all program policies and data use agreements.
+
+
+```{r}
+#Load the required packages.
+
+# List of required packages
+required_packages <- c("tidyverse","gtsummary","ggpubr","dplyr","forcats","readxl","reshape2","plotly",
+                       "AER","stringr","psych","RColorBrewer","ggplot2","knitr","fastDummies","car",
+                       "ggcorrplot","MASS","kableExtra","vtable","flextable","data.table","scales",
+                       "pander","htmltools","DataExplorer","gridExtra","tictoc","DescTools","bstfun",
+                       "modelsummary","stargazer","misty","lubridate","VennDetail","glmnet","broom",
+                       "tableone","hrbrthemes","webshot","caret","bigrquery","vcd","htmlwidgets","writexl")
+
+# Install and load packages
+for (pkg in required_packages){
+  if (!(pkg %in% installed.packages())){
+    install.packages(pkg)
+  }
+  # if it is already present, you must just load 
+  if (!require(pkg, character.only = TRUE, quietly = FALSE)){
+    library(pkg, character.only = TRUE)
+  }
+}
+```
+
+
+# Read in the data
+The path and file name should be adjusted accordingly to users' workbench environment.
+
+```{r}
+# Define data path
+data_path<- file.path(
+  Sys.getenv("WORKSPACE_BUCKET"),
+  "reports",
+  Sys.getenv("OWNER_EMAIL"),
+    "20250603",
+    "192228",
+    "20250603_closest_measurement_to_diabetes_onset_data.csv")
+
+message(str_glue('The data will be read from {data_path}. Use this path when reading ',
+                 'the data into your notebooks in the future.'))
+
+read_bq_import_from_workspace_bucket <- function(import_path, col_types = NULL) {
+  chunk <- read_csv(
+    pipe(str_glue('gsutil cat {import_path}')), 
+    col_types = col_types, 
+    show_col_types = FALSE
+  )
+  if (is.null(col_types)) {
+    # Add logic for handling NULL col_types
+  }
+  return(chunk)
+}
+```
+
+
+# The data is renamed
+
+```{r}
+df <- read_bq_import_from_workspace_bucket(data_path)
+data <- df
+```
+
+
+# Remove the unused column names
+
+```{r}
+my_data <- subset(data, select = -c(gender, gender_concept_id, race_concept_id, ethnicity_concept_id, sex_at_birth_concept_id, self_reported_category, self_reported_category_concept_id, `Computed heart rate, mean of 2nd and 3rd measures`, `Computed waist circumference, mean of closest two measures`, `Computed hip circumference, mean of closest two measures`, `Computed waist circumference, mean of closest two measures`, `Computed diastolic blood pressure, mean of 2nd and 3rd measures`, `Computed systolic blood pressure, mean of 2nd and 3rd measures`,
+`Cholesterol in LDL [Mass/volume] in Serum or Plasma by calculation`,
+diabetes_onset_date.y))
+```
+
+
+# Count the number of non NA values in each column
+
+
+```{r}
+# Count non Na values in the column
+non_na_counts <- sapply(my_data, function(x) sum(!is.na(x)))
+
+# View the result as a sorted data frame
+
+non_na_summary <- data.frame(
+  column_name = names(non_na_counts),
+  non_na_count = as.vector(non_na_counts)
+)
+
+# Sort by number of non-NA values
+non_na_summary <- non_na_summary[order(-non_na_summary$non_na_count), ]
+
+# View  columns with most non-NAs
+View(non_na_summary)
+```
+
+
+Let us see how the data set looks like
+
+
+```{r}
+glimpse(my_data)
+```
+
+
+Convert date_of_birth to Date and calculate Age
+
+```{r}
+my_data <- my_data %>%
+  mutate(
+    date_of_birth = as.Date(date_of_birth),  # convert character to Date
+    age = round(as.numeric(difftime(Sys.Date(), date_of_birth, units = "days")) / 365.25)
+  )
+```
+
+
+Rename the variables
+
+```{r}
+my_data <- my_data %>%
+  rename(
+    waist_circumference = `Adult Waist Circumference Protocol`,
+    height = `Body height`,
+    bmi = `Body mass index (BMI) [Ratio]`,
+    weight = `Body weight`,
+    diastolic_bp = `Diastolic blood pressure`,
+    systolic_bp = `Systolic blood pressure`,
+    heart_rate = `Heart rate`,
+    hip_circumference = `PhenX - hip circumference protocol 020801`,
+    alt = `Alanine aminotransferase [Enzymatic activity/volume] in Serum or Plasma`,
+    albumin = `Albumin [Mass/volume] in Serum or Plasma`,
+    alk_phosphatase = `Alkaline phosphatase [Enzymatic activity/volume] in Serum or Plasma`,
+    ast = `Aspartate aminotransferase [Enzymatic activity/volume] in Serum or Plasma`,
+    bilirubin_total = `Bilirubin.total [Mass/volume] in Serum or Plasma`,
+    calcium = `Calcium [Mass/volume] in Serum or Plasma`,
+    co2 = `Carbon dioxide, total [Moles/volume] in Serum or Plasma`,
+    chloride = `Chloride [Moles/volume] in Serum or Plasma`,
+    hdl = `Cholesterol in HDL [Mass/volume] in Serum or Plasma`,
+    ldl = `Cholesterol in LDL [Mass/volume] in Serum or Plasma`,
+    total_cholesterol = `Cholesterol [Mass/volume] in Serum or Plasma`,
+    creatinine = `Creatinine [Mass/volume] in Serum or Plasma`,
+    rdw = `Erythrocyte distribution width [Ratio] by Automated count`,
+    glucose = `Glucose [Mass/volume] in Serum or Plasma`,
+    hematocrit = `Hematocrit [Volume Fraction] of Blood by Automated count`,
+    hba1c = `Hemoglobin A1c/Hemoglobin.total in Blood`,
+    hemoglobin = `Hemoglobin [Mass/volume] in Blood`,
+    wbc = `Leukocytes [#/volume] in Blood by Automated count`,
+    mch = `MCH [Entitic mass] by Automated count`,
+    mchc = `MCHC [Mass/volume] by Automated count`,
+    mcv = `MCV [Entitic volume] by Automated count`,
+    platelets = `Platelets [#/volume] in Blood by Automated count`,
+    potassium = `Potassium [Moles/volume] in Serum or Plasma`,
+    protein = `Protein [Mass/volume] in Serum or Plasma`,
+    sodium = `Sodium [Moles/volume] in Serum or Plasma`,
+    triglyceride = `Triglyceride [Mass/volume] in Serum or Plasma`,
+    bun = `Urea nitrogen [Mass/volume] in Serum or Plasma`,
+    temperature = `Body temperature`,
+    rbc = `Erythrocytes [#/volume] in Blood by Automated count`,
+    respiratory_rate = `Respiratory rate`,
+    diabetes_onset_date = `diabetes_onset_date.x`
+  )
+```
+
+
+Examine the excluded data
+
+```{r}
+# Check excluded data: those with HbA1c between 6 and 6.5
+excluded_data <- my_data %>%
+  filter(!is.na(hba1c) & hba1c >= 6 & hba1c <= 6.5)
+```
+
+
+Remove individuals with A1c between 6 and 6.5
+
+```{r}
+# Count original rows
+original_n <- nrow(my_data)
+
+# Filter out HbA1c between 6 and 6.5
+my_data <- my_data %>%
+  filter(is.na(hba1c) | hba1c < 6 | hba1c > 6.5)
+
+# Count rows after filtering
+filtered_n <- nrow(my_data)
+
+# Show the number of rows removed and retained
+cat("Rows removed:", original_n - filtered_n, "\n")
+cat("Rows retained:", filtered_n, "\n")
+```
+
+Calculate the age at diabetes diagnosis
+
+```{r}
+my_data <- my_data %>%
+  mutate(
+    # Fix diabetic_neuropathy_onset_date (convert only if it’s not already <date>)
+    diabetic_neuropathy_onset_date = ymd_hms(diabetic_neuropathy_onset_date, quiet = TRUE),
+
+    # Convert character variables to factor
+    across(c(race, ethnicity, sex_at_birth, diabetes, diabetic_neuropathy, vitamin_D_deficiency), as.factor),
+
+    # Calculate age at diabetes diagnosis (only if both dates are available)
+    age_at_diabetes_diagnosis = if_else(
+      !is.na(diabetes_onset_date) & !is.na(date_of_birth),
+      round(as.numeric(difftime(diabetes_onset_date, date_of_birth, units = "days")) / 365.25, 0),
+      NA_real_
+    )
+  )
+
+```
+
+
+Before we recode the sex, race and ethnic groups, let us see the proportions we have by group
+
+```{r}
+# Function to calculate proportions
+get_prop_table <- function(data, var) {
+  data %>%
+    filter(!is.na(.data[[var]])) %>%
+    count(!!sym(var)) %>%
+    mutate(proportion = n / sum(n)) %>%
+    arrange(desc(proportion))
+}
+
+# Proportion tables
+race_prop <- get_prop_table(my_data, "race")
+ethnicity_prop <- get_prop_table(my_data, "ethnicity")
+sex_prop <- get_prop_table(my_data, "sex_at_birth")
+```
+
+
+Plot the proportions by group
+
+```{r}
+plot_prop <- function(df, var_label) {
+  ggplot(df, aes(x = reorder(!!sym(var_label), -proportion), y = proportion)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    geom_text(aes(label = percent(proportion, accuracy = 0.1)), 
+              vjust = -0.2, size = 5) +
+    labs(
+      title = paste("Proportion of", str_to_title(gsub("_", " ", var_label))),
+      x = str_to_title(gsub("_", " ", var_label)),
+      y = "Proportion"
+    ) +
+    scale_y_continuous(labels = percent_format()) +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.text.x = element_text(angle = 90, hjust = 1, size = 14),
+      axis.text.y = element_text(size = 14),
+      axis.title = element_text(size = 16, face = "bold"),
+      plot.title = element_text(size = 18, face = "bold", hjust = 0.5)
+    )
+}
+
+# Plots
+race_plot <- plot_prop(race_prop, "race")
+eth_plot <- plot_prop(ethnicity_prop, "ethnicity")
+sex_plot <- plot_prop(sex_prop, "sex_at_birth")
+```
+
+Save the plots
+
+```{r}
+ggsave("race_plot.png", plot = race_plot, width = 10, height = 7, dpi = 300)
+ggsave("ethnicity_plot.png", plot = eth_plot, width = 10, height = 7, dpi = 300)
+ggsave("sex_plot.png", plot = sex_plot, width = 10, height = 7, dpi = 300)
+```
+
+View summary tables 
+
+```{r}
+# View tables in R console
+race_prop
+ethnicity_prop
+sex_prop
+```
+
+Re-code sex, racial and ethnic groups
+
+
+```{r}
+# recode the racial groups 
+my_data <- my_data %>%
+  mutate(race = na_if(race, "None Indicated")) %>%
+  mutate(race = na_if(race, "PMI: Skip")) %>%
+  mutate(race = na_if(race, "I prefer not to answer")) %>%
+  mutate(race = na_if(race, "None of these"))
+# drop the unused levels
+my_data$race <- droplevels(my_data$race)
+
+#Rename the groups
+my_data <- my_data %>%
+  mutate(race = fct_recode(race,
+    "AI/AN"       = "American Indian or Alaska Native",
+    "Asian"       = "Asian",
+    "B/African"       = "Black or African American",
+    "ME/NAfrican"        = "Middle Eastern or North African",
+    "Multiracial" = "More than one population",
+    "NH/PI"       = "Native Hawaiian or Other Pacific Islander",
+    "White"       = "White"
+  ))
+
+# recode sex
+my_data <- my_data %>%
+  mutate(
+    sex_at_birth = na_if(sex_at_birth, "I prefer not to answer"),
+    sex_at_birth = na_if(sex_at_birth, "No matching concept"),
+    sex_at_birth = na_if(sex_at_birth, "PMI: Skip"),
+    sex_at_birth = na_if(sex_at_birth, "Sex At Birth: Sex At Birth None Of These"),
+    sex_at_birth = na_if(sex_at_birth, "Intersex"),
+    sex_at_birth = as.factor(sex_at_birth),
+    sex_at_birth = fct_recode(sex_at_birth,
+      "Female" = "Female",
+      "Male"   = "Male"
+    )
+  )
+# drop the unused levels
+my_data$sex_at_birth <- droplevels(my_data$sex_at_birth)
+
+# Ethnicity
+my_data <- my_data %>%
+  mutate(
+    ethnicity = na_if(ethnicity, "No matching concept"),
+    ethnicity = na_if(ethnicity, "PMI: Prefer Not To Answer"),
+    ethnicity = na_if(ethnicity, "PMI: Skip"),
+    ethnicity = na_if(ethnicity, "What Race Ethnicity: Race Ethnicity None Of These"),
+    ethnicity = as.factor(ethnicity),
+    ethnicity = fct_recode(ethnicity,
+      "Hispanic/Latino"    = "Hispanic or Latino",
+      "Non-Hispanic/Latino" = "Not Hispanic or Latino"
+    )
+  )
+# drop the unused levels
+my_data$ethnicity <- droplevels(my_data$ethnicity)
+```
+
+
+## View missing value distribution for the data
+
+
+```{r}
+missing_perc_plots <- plot_missing(my_data)
+
+# Adjust the font sizes
+missing_perc_plots <- missing_perc_plots +
+  theme(
+    text = element_text(size = 16),            # Overall text size
+    axis.title = element_text(size = 16),      # Axis title size
+    axis.text = element_text(size = 16),       # Axis text size
+    plot.title = element_text(size = 18, face = "bold")  # Plot title size
+  )
+
+# Save the plot
+ggsave("Missing_Perc.png", # Full file path
+  plot = missing_perc_plots, 
+  width = 8, 
+  height = 6, 
+  dpi = 300
+)
+```
+
+Counts per column
+
+```{r}
+colSums(!is.na(my_data))
+```
+
+Cap the values at 100,000 and trim afterwards
+
+```{r}
+my_data2 <- subset(my_data, select = -c(date_of_birth))
+
+#  Replace values > 100,000 with NA in selected columns
+# Function to replace values > 100000 with NA
+replace_large_values <- function(x) {
+  x[x > 100000] <- NA
+  return(x)
+}
+
+# Apply to selected columns (e.g., numeric variables)
+# Get numeric column names, excluding 'person_id'
+numeric_cols_to_cap <- names(my_data2)[sapply(my_data2, is.numeric) & names(my_data2) != "person_id"]
+
+# Apply the function only to those columns
+my_data2_capped <- my_data2 %>%
+  mutate(across(all_of(numeric_cols_to_cap), replace_large_values))
+```
+
+Long table for summary statistics of this data:
+
+```{r}
+# Get only numeric columns and exclude person_id
+numeric_vars <- my_data2_capped[, sapply(my_data2_capped, is.numeric)]
+numeric_vars <- numeric_vars[, !(names(numeric_vars) %in% c("person_id"))]
+
+# Safely compute summary with fixed length output
+summary_matrix <- vapply(
+  numeric_vars,
+  function(x) {
+    s <- summary(x)
+    # Fill missing elements if summary is shorter
+    expected_names <- c("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.", "NA's")
+    s[setdiff(expected_names, names(s))] <- NA
+    s[expected_names]
+  },
+  FUN.VALUE = setNames(numeric(7), c("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.", "NA's"))
+)
+
+# Convert to data frame
+summary_df <- as.data.frame(summary_matrix)
+summary_df <- cbind(Statistic = rownames(summary_df), summary_df)
+rownames(summary_df) <- NULL
+
+
+knitr::kable(summary_df, caption = "Summary statistics for numeric capped variables") %>%
+  kableExtra::kable_styling(full_width = FALSE) %>%
+  kableExtra::row_spec(0, color = "white", background = "#1a1a1a") %>%
+  kableExtra::row_spec(1:nrow(summary_df), color = "white", background = "#333333")
+```
+
+Break into chunks:
+
+```{r}
+# Get only numeric columns and exclude person_id
+numeric_vars <- my_data2_capped[, sapply(my_data2_capped, is.numeric)]
+numeric_vars <- numeric_vars[, !(names(numeric_vars) %in% c("person_id"))]
+
+# Safely compute summary with fixed length output
+summary_matrix <- vapply(
+  numeric_vars,
+  function(x) {
+    s <- summary(x)
+    # Fill missing elements if summary is shorter
+    expected_names <- c("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.", "NA's")
+    s[setdiff(expected_names, names(s))] <- NA
+    s[expected_names]
+  },
+  FUN.VALUE = setNames(numeric(7), c("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.", "NA's"))
+)
+
+# Convert to data frame with labeled rows
+summary_df <- as.data.frame(summary_matrix)
+summary_df <- cbind(Statistic = rownames(summary_df), summary_df)
+rownames(summary_df) <- NULL
+
+# Split the data frame into chunks of 10 columns
+chunk_size <- 10
+var_names <- colnames(summary_df)[-1]
+chunks <- split(var_names, ceiling(seq_along(var_names) / chunk_size))
+
+# Print each chunked table using kable and white font style
+for (i in seq_along(chunks)) {
+  temp_df <- summary_df[, c("Statistic", chunks[[i]])]
+  cat("\n\n### Summary Statistics (Chunk", i, ")\n\n")
+  print(
+    knitr::kable(temp_df, caption = paste("Summary statistics for variables", (i-1)*chunk_size + 1, "to", i*chunk_size)) %>%
+      kableExtra::kable_styling(full_width = FALSE) %>%
+      kableExtra::row_spec(0, color = "white", background = "#1a1a1a") %>%
+      kableExtra::row_spec(1:nrow(temp_df), color = "white", background = "#333333")
+  )
+}
+```
+
+
+Trim the data using the 0.1% percentile
+
+```{r}
+# Trim using the 0.1% percentile - upper and lower trimming 
+trim_outliers <- function(x, lower = 0.001, upper = 0.999) {
+  if (!is.numeric(x)) return(x)
+  q <- quantile(x, probs = c(lower, upper), na.rm = TRUE)
+  x[x < q[1] | x > q[2]] <- NA
+  return(x)
+}
+
+# Define columns to trim (you can update this list as needed)
+vars_to_trim <- c(
+  "bmi", "weight", "waist_circumference", "hip_circumference",
+  "height", "glucose", "creatinine", "rdw", "triglyceride","ldl",
+  "hdl", "ast", "alt", "albumin", "alk_phosphatase", "bilirubin_total",
+  "calcium", "co2", "chloride", "hematocrit", "hba1c", "hemoglobin",
+  "mch", "mchc", "mcv", "platelets", "potassium", "protein", "sodium",
+  "bun", "temperature", "rbc", "respiratory_rate", "heart_rate",
+  "systolic_bp", "diastolic_bp","wbc"
+)
+
+# Apply to all numeric columns
+my_data2_trimmed <- my_data2_capped %>%
+  mutate(across(all_of(vars_to_trim), trim_outliers))
+sapply(my_data2_trimmed, summary)
+```
+
+
+Data Trimmed
+
+Create the summary statistics for trimmed data
+
+
+```{r}
+# Get only numeric columns and exclude person_id
+numeric_vars <- my_data2_trimmed[, sapply(my_data2_trimmed, is.numeric)]
+numeric_vars <- numeric_vars[, !(names(numeric_vars) %in% c("person_id"))]
+
+# Safely compute summary with fixed length output
+summary_matrix <- vapply(
+  numeric_vars,
+  function(x) {
+    s <- summary(x)
+    # Fill missing elements if summary is shorter
+    expected_names <- c("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.", "NA's")
+    s[setdiff(expected_names, names(s))] <- NA
+    s[expected_names]
+  },
+  FUN.VALUE = setNames(numeric(7), c("Min.", "1st Qu.", "Median", "Mean", "3rd Qu.", "Max.", "NA's"))
+)
+
+# Convert to data frame with labeled rows
+summary_df <- as.data.frame(summary_matrix)
+summary_df <- cbind(Statistic = rownames(summary_df), summary_df)
+rownames(summary_df) <- NULL
+
+# Split the data frame into chunks of 10 columns
+chunk_size <- 10
+var_names <- colnames(summary_df)[-1]
+chunks <- split(var_names, ceiling(seq_along(var_names) / chunk_size))
+
+# Print each chunked table using kable and white font style
+for (i in seq_along(chunks)) {
+  temp_df <- summary_df[, c("Statistic", chunks[[i]])]
+  cat("\n\n### Summary Statistics (Chunk", i, ")\n\n")
+  print(
+    knitr::kable(temp_df, caption = paste("Summary statistics for variables", (i-1)*chunk_size + 1, "to", i*chunk_size)) %>%
+      kableExtra::kable_styling(full_width = FALSE) %>%
+      kableExtra::row_spec(0, color = "white", background = "#1a1a1a") %>%
+      kableExtra::row_spec(1:nrow(temp_df), color = "white", background = "#333333")
+  )
+}
+```
+
+
+Generate a bar plot slide that compares Race, Ethnicity, and Sex at Birth between Diabetes and Non-Diabetes groups.
+
+```{r}
+# Select and pivot key variables
+plotting_data <- my_data2_trimmed %>%
+  dplyr::select(diabetes, race, ethnicity, sex_at_birth) %>%
+  pivot_longer(cols = c(race, ethnicity, sex_at_birth),
+               names_to = "variable", values_to = "value") %>%
+  filter(!is.na(diabetes), !is.na(value))
+
+
+# Count combinations
+plotting_counts <- plotting_data %>%
+  count(variable, value, diabetes)
+
+ggplot(plotting_counts, aes(x = value, y = n, fill = diabetes)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+    title = "Demographic Distribution by Diabetes Status",
+    x = NULL, y = "Count",
+    fill = "Diabetes Status"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Let us check in terms of proportion
+
+```{r}
+# Step 1: Prepare proportional data
+prop_data <- plotting_data %>%
+  count(variable, value, diabetes) %>%
+  group_by(variable, value) %>%
+  mutate(proportion = n / sum(n))
+
+# Step 2: Plot proportions
+ggplot(prop_data, aes(x = value, y = proportion, fill = diabetes)) +
+  geom_bar(stat = "identity", position = "fill") +  # or position = "dodge" for side-by-side
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+    title = "Proportion of Diabetes by Demographic Subgroup",
+    x = NULL, y = "Proportion",
+    fill = "Diabetes Status"
+  ) +
+  theme_minimal(base_size = 14) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Prepare and clean data
+
+```{r}
+# Prepare and clean data
+demo_data <- my_data2_trimmed %>%
+  dplyr::select(diabetes, race, ethnicity, sex_at_birth) %>%
+  pivot_longer(cols = c(race, ethnicity, sex_at_birth),
+               names_to = "variable", values_to = "value") %>%
+  filter(!is.na(diabetes), !is.na(value)) %>%
+  mutate(
+    variable = case_when(
+      variable == "race" ~ "Race",
+      variable == "ethnicity" ~ "Ethnicity",
+      variable == "sex_at_birth" ~ "Sex",
+      TRUE ~ variable
+    )
+  )
+
+
+# Calculate proportions within each demographic group
+prop_data <- demo_data %>%
+  count(variable, value, diabetes) %>%
+  group_by(variable, value) %>%
+  mutate(proportion = n / sum(n))
+
+# Plot
+ggplot(prop_data, aes(x = value, y = proportion, fill = diabetes)) +
+  geom_bar(stat = "identity", position = "fill") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+    title = "Proportion of Diabetes Status by Demographic Group",
+    x = NULL, y = "Proportion",
+    fill = "Diabetes Status"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal() +  # Increase base font size
+  theme(
+    strip.text = element_text(size = 18, face = "bold"),      # Facet title
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),  # X-axis labels
+    axis.text.y = element_text(size = 20),                         # Y-axis labels
+    axis.title.y = element_text(size = 22, face = "bold"),
+    plot.title = element_text(size = 22, face = "bold"),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16)
+  )
+# Save high-resolution plot
+ggsave("demographic_diabetes_plot.png", width = 12, height = 8, dpi = 300)
+```
+
+
+Filter to diabetes cohort and do same
+
+```{r}
+diabetes_demo <- my_data2_trimmed %>%
+  filter(diabetes == "Yes") %>%
+  dplyr::select(diabetic_neuropathy, race, ethnicity, sex_at_birth)
+
+neuropathy_long <- diabetes_demo %>%
+  pivot_longer(cols = c(race, ethnicity, sex_at_birth),
+               names_to = "variable", values_to = "value") %>%
+  filter(!is.na(diabetic_neuropathy), !is.na(value)) %>%
+  mutate(
+    variable = case_when(
+      variable == "race" ~ "Race",
+      variable == "ethnicity" ~ "Ethnicity",
+      variable == "sex_at_birth" ~ "Sex",
+      TRUE ~ variable
+    )
+  )
+
+# Compute Proportions
+neuropathy_prop <- neuropathy_long %>%
+  count(variable, value, diabetic_neuropathy) %>%
+  group_by(variable, value) %>%
+  mutate(proportion = n / sum(n))
+
+# Plot
+ggplot(neuropathy_prop, aes(x = value, y = proportion, fill = diabetic_neuropathy)) +
+  geom_bar(stat = "identity", position = "fill") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(
+    title = "Proportion of Diabetic Neuropathy by Demographic Group",
+    x = NULL, y = "Proportion",
+    fill = "Neuropathy Status"
+  ) +
+  scale_y_continuous(labels = percent_format()) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    axis.text.y = element_text(size = 20),
+    axis.title.y = element_text(size = 22, face = "bold"),
+    plot.title = element_text(size = 22, face = "bold"),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 16)
+  )
+# Save high-resolution plot
+ggsave("demographic_DN_plot.png", width = 12, height = 8, dpi = 300, bg="white")
+```
+
+
+# Diabetes Cohort - Contains Neuropathy and Non-neuropathy
+
+Current model: “Among diabetics, what predicts neuropathy?”
+
+Since the Elastic Net and logistic model are predicting diabetic neuropathy, we must filter to only individuals with diabetes.
+
+```{r}
+# Filter only those with diabetes
+diabetes_data <- my_data2_trimmed %>%
+  filter(diabetes == "Yes") %>%
+  mutate(diabetic_neuropathy_binary = as.integer(diabetic_neuropathy == "Yes"),
+  diabetes_duration_years = floor(interval(start = diabetes_onset_date, end = Sys.Date()) / years(1))
+)
+
+# Calculate LDL-C using the Sampson's formula
+diabetes_data <- diabetes_data %>%
+  mutate(
+    non_hdl = total_cholesterol - hdl,
+    ldl_sampson = if_else(
+      !is.na(total_cholesterol) & !is.na(hdl) & !is.na(triglyceride),
+      (total_cholesterol / 0.948) -
+        (hdl / 0.971) -
+        ((triglyceride / 8.56) +
+         ((triglyceride * non_hdl) / 2140) -
+         ((triglyceride^2) / 16100)) -
+        9.44,
+      NA_real_
+    )
+  )
+
+# Calculate BMI from Height and Weight
+# Divide by 100 to convert from cm to m
+diabetes_data <- diabetes_data %>%
+  mutate(
+    bmi_calc = if_else(
+      !is.na(height) & !is.na(weight),
+      weight / ((height / 100)^2),
+      NA_real_
+    )
+  )
+
+# Now, let us remove the variables we are no longer using
+diabetes_data <- subset(diabetes_data, select = -c(ldl, bmi, non_hdl, age))
+```
+
+
+```{r}
+# Cap values using known maximum and minimum according to literature
+diabetes_data <- diabetes_data %>%
+  mutate(
+    ldl_sampson = ifelse(ldl_sampson < 0 | ldl_sampson > 700, NA, ldl_sampson),
+    total_cholesterol = ifelse(total_cholesterol < 50 | total_cholesterol > 800, NA, total_cholesterol),
+    triglyceride = ifelse(triglyceride < 10 | triglyceride > 1500, NA, triglyceride),
+    temperature = ifelse(temperature < 30 | temperature > 43, NA, temperature)
+  )
+```
+
+
+After filtering, the median missingness across retained biomarkers are: 
+
+
+```{r}
+# Check missingness across retained biomarkers
+missing_perc <- sapply(diabetes_data, function(x) mean(is.na(x)) * 100)
+summary(missing_perc)
+
+# Calculate median and IQR
+median_missing <- median(missing_perc)
+iqr_missing <- IQR(missing_perc)
+quantiles <- quantile(missing_perc, probs = c(0.25, 0.75))
+
+# Number of complete cases
+n_complete <- sum(complete.cases(diabetes_data))
+```
+
+
+Missing plot plot
+
+```{r}
+missing_plot <- plot_missing(diabetes_data)
+
+# Save as PDF
+ggsave("missing_plot.pdf", plot = missing_plot, width = 18, height = 16, units = "in", dpi = 500, bg="white")
+
+# Save as SVG
+ggsave("missing_plot.svg", plot = missing_plot, width = 18, height = 16, units = "in", dpi = 500, bg="white")
+```
+
+
+Plot the characteristics data
+
+```{r}
+# Define the outcome
+my_data3 <- diabetes_data %>%
+  mutate(diabetic_neuropathy_binary = ifelse(diabetic_neuropathy == "Yes", 1, 0))
+
+# Specify variables to include
+vars <- c("sex_at_birth","race","ethnicity","age_at_diabetes_diagnosis","bmi_calc","hba1c","ldl_sampson","hdl",
+          "creatinine","triglyceride","vitamin_D_deficiency","diabetes_duration_years","glucose","waist_circumference",
+          "albumin","total_cholesterol","hemoglobin","hematocrit","height","weight","bilirubin_total","systolic_bp",
+          "diastolic_bp","heart_rate","hip_circumference","ast","alt","alk_phosphatase","calcium","chloride",
+          "potassium","protein","sodium","mcv","bun","co2","rbc","rdw","wbc","mch","mchc","platelets","temperature",
+          "respiratory_rate")
+
+# Specify which ones are categorical
+catVars <- c("sex_at_birth", "race", "ethnicity")
+
+# Create the table
+table1 <- CreateTableOne(vars = vars, strata = "diabetic_neuropathy", data = my_data3, factorVars = catVars)
+table2 <- CreateTableOne(vars = vars, data = my_data3, factorVars = catVars)
+
+# As data frame for saving
+table1_df <- print(table1, showAllLevels = TRUE, quote = FALSE, noSpaces = TRUE, printToggle = FALSE)
+table2_df <- print(table2, showAllLevels = TRUE, quote = FALSE, noSpaces = TRUE, printToggle = FALSE)
+
+# Save to CSV
+write.csv(table1_df, "Table1_Demographics.csv", row.names = TRUE)
+write.csv(table2_df, "Overall_Table_Demographics.csv", row.names = TRUE)
+```
+
+
+Generate boxplots
+
+```{r}
+# Select and reshape data
+biomarkers <- diabetes_data %>%
+  dplyr::select(diabetic_neuropathy_binary, hba1c, ldl_sampson, glucose, diabetes_duration_years) %>%
+  pivot_longer(cols = -diabetic_neuropathy_binary,
+               names_to = "Biomarker", values_to = "Value") %>%
+  filter(!is.na(Value), !is.na(diabetic_neuropathy_binary)) %>%
+  mutate(
+    Biomarker = case_when(
+      Biomarker == "hba1c" ~ "HbA1c",
+      Biomarker == "ldl_sampson" ~ "LDL-C",
+      Biomarker == "glucose" ~ "Glucose",
+      Biomarker == "diabetes_duration_years" ~ "Diabetes Duration",
+      TRUE ~ Biomarker
+    ),
+    diabetic_neuropathy_binary = factor(diabetic_neuropathy_binary,
+                                        levels = c(0, 1),
+                                        labels = c("No DPN", "Yes DPN"))
+  )
+
+# Create boxplot
+ggplot(biomarkers, aes(x = diabetic_neuropathy_binary, y = Value, fill = diabetic_neuropathy_binary)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+  #geom_jitter(width = 0.2, size = 0.7, alpha = 0.3) +
+  stat_compare_means(method = "wilcox.test", label = "p.format", size = 5) +
+  facet_wrap(~ Biomarker, scales = "free_y", ncol = 2) +
+  scale_fill_manual(values = c("#009E73", "#D55E00")) +
+  labs(
+    title = "Figure 2: Distribution of Key Biomarkers by DPN Status",
+    x = NULL, y = "Biomarker Value",
+    fill = "DPN Status"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    strip.text = element_text(size = 14),
+    legend.position = "top"
+  )
+
+# Save figure
+ggsave("Key_Biomarkers_Boxplots.pdf", width = 12, height = 8)
+```
+
+
+# Elastic Net Regression
+
+
+```{r}
+# select and prepare predictors
+# Only include numeric or encoded categorical variables — Elastic Net via glmnet() requires a numeric matrix:
+
+my_data_model <- my_data3 %>%
+  dplyr::select(-person_id, -diabetes_onset_date, -diabetic_neuropathy_onset_date, -diabetic_neuropathy) %>%
+  dummy_cols(select_columns = c("race", "ethnicity", "sex_at_birth", "diabetes", "vitamin_D_deficiency"),
+             remove_first_dummy = TRUE, remove_selected_columns = TRUE)
+
+# remove rows with missing values
+my_data_model <- my_data_model %>%
+  drop_na()
+
+# Create X and Y matrices
+x <- model.matrix(diabetic_neuropathy_binary ~ . , my_data_model)[,-1]
+y <- my_data_model$diabetic_neuropathy_binary
+
+# Run Elastic Net
+set.seed(123)
+cv_elNet <- cv.glmnet(x, y, alpha = 0.5, family = "binomial")
+plot(cv_elNet, xvar = "loglambda")
+cv_elNet$lambda.min
+
+# Save Elastic Net cross-validation plot as a PNG
+png("elastic_net_cv_plot.png", width = 800, height = 600)
+plot(cv_elNet)
+dev.off()
+
+# save as pdf
+pdf("elastic_net_cv_plot.pdf")
+plot(cv_elNet)
+dev.off()
+
+#Get selected variables
+elNet_coef <- coef(cv_elNet, s = "lambda.min")
+print(elNet_coef)
+
+# View selected variables only (non-zero coefficients)
+selected_vars <- rownames(elNet_coef)[elNet_coef[, 1] != 0]
+selected_vars <- selected_vars[selected_vars != "(Intercept)"]
+print(selected_vars)
+
+# Variables dropped by LASSO
+dropped_vars <- rownames(elNet_coef)[elNet_coef[, 1] == 0]
+dropped_vars <- dropped_vars[dropped_vars != "(Intercept)"]
+print(dropped_vars)
+```
+
+
+Visualize top predictors (by absolute coefficient size)
+
+
+```{r}
+coef_df <- as.data.frame(as.matrix(coef(cv_elNet, s = "lambda.min"))) %>%
+  rownames_to_column("variable") %>%
+  rename_with(~ "coef_value", .cols = 2) %>%  # Rename the only unnamed column
+  filter(variable != "(Intercept)") %>%
+  mutate(abs_value = abs(coef_value)) %>%
+  filter(coef_value != 0) %>%
+  arrange(desc(abs_value))
+
+# Define cleaner labels for plot axis
+pretty_labels <- c(
+  waist_circumference = "Waist Circumference",
+  height = "Height",
+  weight = "Weight",
+  diastolic_bp = "Diastolic BP",
+  systolic_bp = "Systolic BP",
+  albumin = "Albumin",
+  calcium = "Calcium",
+  creatinine = "Creatinine",
+  glucose = "Glucose",
+  hematocrit = "Hematocrit",
+  hba1c = "HbA1c",
+  hemoglobin = "Hemoglobin",
+  wbc = "White Blood Cell Count",
+  mcv = "MCV",
+  sodium = "Sodium",
+  triglyceride = "Triglyceride",
+  bun = "BUN",
+  temperature = "Temperature",
+  respiratory_rate = "Respiratory Rate",
+  age = "Age",
+  ldl = "LDL",
+  total_cholesterol = "Total Cholesterol",
+  race_White = "Race: White",
+  potassium = "Potassium",
+  vitamin_D_deficiency_Yes = "Vitamin D Deficiency",
+  alk_phosphatase = "ALP",
+  "`race_ME/NAfrican`" = "Race: MENA",
+  diabetes_duration_years = "Diabetes Duration"
+)
+
+# Apply mapping to a new column
+coef_df$label <- pretty_labels[coef_df$variable]
+# Fallback to original variable names for any missing labels
+coef_df$label[is.na(coef_df$label)] <- coef_df$variable[is.na(coef_df$label)]
+
+# Plot top 15 variables by absolute coefficient value
+ggplot(coef_df, aes(x = reorder(label, abs_value), y = coef_value)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Predictors Selected by Elastic Net Regression",
+       x = "Variable",
+       y = "Coefficient") +
+  theme_minimal(base_size = 14)
+```
+
+Identify protective vs. risk factors (Add colour)
+
+```{r}
+coef_df <- coef_df %>%
+  mutate(effect = ifelse(coef_value > 0, "Risk Factor", "Protective"))
+
+ggplot(coef_df, aes(x = reorder(label, abs_value), y = coef_value, fill = effect)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values = c("Risk Factor" = "firebrick", "Protective" = "forestgreen")) +
+  labs(title = "Predictors Selected by Elastic Net Regression",
+       x = "Variable",
+       y = "Coefficient",
+       fill = "Effect Type") +
+  theme_minimal()+
+  theme(
+    axis.title = element_text(size = 22),    # Axis title size
+    axis.text = element_text(size = 22),     # Axis tick label size
+    plot.title = element_text(size = 25, face = "bold"),
+    legend.title = element_text(size = 20),
+    legend.text = element_text(size = 18)) #base_size = 20)
+#ggsave("DN_ElasticNetReg.svg", width = 40, height = 29, units = "cm", dpi=300)
+#ggsave("DN_ElasticNetReg.pdf", width = 40, height = 29, units = "cm", dpi=300)
+```
+
+
+# Refit Logistic Regression Using Elastic Net-Selected Variables
+
+```{r}
+# Convert selected variable names to a formula
+selected_formula <- as.formula(
+  paste("diabetic_neuropathy_binary ~", paste(selected_vars, collapse = " + "))
+)
+
+# Refit logistic regression using selected predictors
+logit_model <- glm(selected_formula, data = my_data_model, family = binomial)
+
+# Summarize the model
+summary(logit_model)
+
+# Get odds ratios and confidence intervals
+# Get Odds Ratios
+exp(coef(logit_model))
+
+# Get 95% Confidence Intervals for Odds Ratios
+exp(confint(logit_model))
+
+# For clean table output
+# Create tidy model summary with odds ratios and confidence intervals
+logit_summary <- tidy(logit_model, exponentiate = TRUE, conf.int = TRUE)
+
+# Export to Excel
+write_xlsx(logit_summary, "logistic_model_results_selected_ElNet2.xlsx")
+```
+
+
+Visualize this result
+
+
+```{r}
+# Prepare data (convert log-odds to odds ratios for better interpretation)
+logit_plot_data <- logit_summary %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    OR = estimate,
+    term = gsub("`", "", term),  # remove backticks
+    significance = ifelse(p.value < 0.05, "Significant", "Not Significant")
+  )
+
+# Plot
+ggplot(logit_plot_data, aes(x = reorder(term, OR), y = OR)) +
+  geom_point(aes(color = significance), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = significance), width = 0.2) +
+  scale_y_log10() +  # Odds ratios are best shown on a log scale
+  coord_flip() +
+  labs(
+    title = "Logistic Regression Odds Ratios with 95% CI",
+    x = "Variable",
+    y = "Odds Ratio (log scale)"
+  ) +
+  scale_color_manual(values = c("Significant" = "hotpink", "Not Significant" = "gray")) +
+  theme_minimal(base_size = 14)
+```
+
+Make the plot pretty
+
+```{r}
+#  1: Create a vector of pretty labels
+pretty_names <- c(
+  hematocrit = "Hematocrit",
+  albumin = "Albumin",
+  alk_phosphatase = "ALP",
+  respiratory_rate = "Respiratory Rate",
+  diabetes_duration_years = "Diabetes Duration",
+  "race_ME/NAfrican" = "Race: MENA",
+  vitamin_D_deficiency_Yes = "Vitamin D Deficiency"
+)
+
+#  2: Prepare plot data
+logit_plot_data <- logit_summary %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    clean_term = gsub("`", "", term),
+    pretty_term = pretty_names[clean_term],
+    OR = estimate,
+    significance = ifelse(p.value < 0.05, "Significant", "Not Significant")
+  )
+
+#  3: Replace NA labels with raw variable name (fallback)
+logit_plot_data$pretty_term[is.na(logit_plot_data$pretty_term)] <- logit_plot_data$clean_term[is.na(logit_plot_data$pretty_term)]
+
+# Step 4: Create the forest plot
+ggplot(logit_plot_data, aes(x = reorder(pretty_term, OR), y = OR)) +
+  geom_point(aes(color = significance), size = 4) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = significance), width = 0.2, linewidth = 3) +
+  scale_y_log10() +
+  coord_flip() +
+  labs(
+    title = "Logistic Regression Odds Ratios with 95% Confidence Intervals",
+    x = NULL,
+    y = "Odds Ratio (log scale)"
+  ) +
+  scale_color_manual(values = c("Significant" = "hotpink", "Not Significant" = "gray")) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(face = "bold", size = 35, hjust = 0.5),
+    axis.text.y = element_text(face = "bold", size = 30),
+    axis.text.x = element_text(size = 30),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 25)
+  )
+```
+
+
+Correlation for Diabetic Patients
+
+
+```{r}
+# Drop columns with "onset_date" and factor variables
+diabetes_numeric <- diabetes_data %>%
+  dplyr::select(
+    -contains("onset_date"),                 # drop onset dates
+    -where(is.factor),                      # drop factor (categorical) variables
+    -diabetic_neuropathy_binary             # drop outcome
+  ) %>%
+  dplyr::select(where(is.numeric))          # keep only numeric
+
+# Compute correlation matrix (pairwise complete obs handles NAs)
+cor_matrix_diab <- cor(diabetes_numeric, use = "pairwise.complete.obs", method = "spearman")
+
+#  Filter variables with ≥ 90% usable data
+valid_vars <- rownames(cor_matrix_diab)[
+  rowSums(!is.na(cor_matrix_diab)) / ncol(cor_matrix_diab) >= 0.9
+]
+cor_matrix_clean_diab <- cor_matrix_diab[valid_vars, valid_vars]
+```
+
+# Show only strong correlations (|r| ≥ 0.7)
+
+```{r}
+cor_filtered_clusterable_diab <- cor_matrix_clean_diab
+cor_filtered_clusterable_diab[abs(cor_filtered_clusterable_diab) < 0.7] <- 0
+```
+
+Plot the Correlations (Diabetes Cohort)
+
+```{r}
+# Top N strongest correlations (pairwise bar plot)
+# Long format with absolute correlation
+cor_long_diab <- as.data.frame(as.table(cor_matrix_clean_diab)) %>%
+  filter(Var1 != Var2) %>%
+  mutate(pair = paste(pmin(as.character(Var1), as.character(Var2)),
+                      "~",
+                      pmax(as.character(Var1), as.character(Var2)))) %>%
+  distinct(pair, .keep_all = TRUE) %>%
+  mutate(abs_corr = abs(Freq)) %>%
+  filter(abs_corr >= 0.7) %>% 
+  arrange(desc(abs_corr)) 
+
+
+cor_longz_diab <- cor_long_diab %>%
+  mutate(
+    pair_clean = str_to_title(gsub("_", " ", pair)), # Replace _ with space, then Title Case
+  )
+
+# Bar plot
+ggplot(cor_longz_diab, aes(x = reorder(pair_clean, abs_corr), y = Freq, fill = Freq)) +
+  geom_col() +
+  geom_text(
+    aes(label = paste0("r = ", round(Freq, 2))),
+    hjust = 1.05,  # push text slightly to the left of the bar
+    color = "black",
+    size = 9
+  ) +
+  coord_flip() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
+  name = "Correlation") +
+  labs(
+    title = "Highly Correlated Variable Pairs (r ≥ 0.7)",
+    x = "Variable Pair", y = "Correlation"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title = element_text(size = 25),    # Axis title size
+    axis.text = element_text(size = 25),     # Axis tick label size
+    plot.title = element_text(size = 28, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 22)
+  )
+ggsave("DN_CorrelationPlot.svg", width = 40, height = 29, units = "cm", dpi=300)
+ggsave("DN_CorrelationPlot.pdf", width = 40, height = 29, units = "cm", dpi=300)
+
+```
+
+Make it pretty:
+
+```{r}
+# Define replacements
+label_replacements <- c(
+  "Mch" = "MCH",
+  "Mcv" = "MCV",
+  "Bmi Calc" = "BMI",
+  "Ldl Sampson" = "LDL-C",
+  "Alt" = "ALT",
+  "Ast" = "AST",
+  "Rbc" = "RBC",
+  "Hip Circumference" = "Hip Circumference",
+  "Waist Circumference" = "Waist Circumference",
+  "Total Cholesterol" = "Total Cholesterol",
+  "Hemoglobin" = "Hemoglobin",
+  "Hematocrit" = "Hematocrit",
+  "Weight" = "Weight",
+  "Hba1c" = "HbA1c"
+)
+
+# Apply replacements to each variable name within the pair
+cor_longz_diab <- cor_long_diab %>%
+  dplyr::mutate(pair_clean = pair) %>%
+  tidyr::separate(pair_clean, into = c("var1", "var2"), sep = " ~ ") %>%
+  dplyr::mutate(
+    var1 = dplyr::recode(str_to_title(gsub("_", " ", var1)), !!!as.list(label_replacements)),
+    var2 = dplyr::recode(str_to_title(gsub("_", " ", var2)), !!!as.list(label_replacements)),
+    pair_clean = paste(var1, "~", var2)
+  )
+
+# Plot
+ggplot(cor_longz_diab, aes(x = reorder(pair_clean, abs_corr), y = Freq, fill = Freq)) +
+  geom_col() +
+  geom_text(
+    aes(label = paste0("r = ", round(Freq, 2))),
+    hjust = 1.05,
+    color = "black",
+    size = 9
+  ) +
+  coord_flip() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
+                       name = "Correlation") +
+  labs(
+    title = "Highly Correlated Variable Pairs (r ≥ 0.7)",
+    x = "Variable Pair", y = "Correlation"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title = element_text(size = 25),
+    axis.text = element_text(size = 25),
+    plot.title = element_text(size = 28, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 25),
+    legend.text = element_text(size = 22)
+  )
+
+# Save
+#ggsave("DN_CorrelationPlot_Spearman.pdf", width = 40, height = 29, units = "cm", dpi = 300)
+```
+
+
+UNIVARIATE DATA ANALYSIS
+
+```{r, warning = FALSE, message=FALSE}
+# Define variables to drop (including diabetes-related and IDs/dates)
+vars_to_drop <- c(
+  "diabetes", "diabetic_neuropathy", "person_id",
+  "diabetes_onset_date", "diabetic_neuropathy_onset_date",
+  "diabetic_neuropathy_binary"  # Exclude from predictors
+)
+
+# Re-level the references for race and ethnicity
+diabetes_data$race <- relevel(diabetes_data$race, ref = "White")
+diabetes_data$ethnicity <- relevel(diabetes_data$ethnicity, ref = "Hispanic/Latino")
+
+
+# Create predictor data by removing the excluded variables
+predictor_data <- diabetes_data %>%
+  dplyr::select(-all_of(vars_to_drop))
+
+# List of remaining predictors
+predictor_vars <- colnames(predictor_data)
+
+# Run univariate logistic regression for each predictor
+univariate_results <- lapply(predictor_vars, function(var) {
+  formula <- as.formula(paste("diabetic_neuropathy_binary ~", var))
+  model <- glm(formula, data = diabetes_data, family = binomial)
+  tidy(model, exponentiate = TRUE, conf.int = TRUE) %>%
+    dplyr::filter(term != "(Intercept)") %>%
+    mutate(predictor = var)
+})
+
+# Combine results
+univariate_df <- bind_rows(univariate_results)
+
+# Export to Excel
+write_xlsx(univariate_df, "All_DB_univariate_logistic_results.xlsx")
+
+# Filter significant results (p < 0.05)
+significant_vars <- univariate_df %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value)
+
+# View
+print(significant_vars)
+
+# Export to Excel
+write_xlsx(significant_vars, "DB_significant_univariate_logistic_results.xlsx")
+```
+
+Visualize the result
+
+```{r, warning = FALSE, message=FALSE}
+# Create pretty variable name mapping
+pretty_names <- c(
+  diabetes_duration_years = "Diabetes Duration",
+  glucose = "Glucose",
+  vitamin_D_deficiencyYes = "Vitamin D Deficiency",
+  hba1c = "HbA1c",
+  height = "Height",
+  sex_at_birthMale = "Sex: Male",
+  albumin = "Albumin",
+  sodium = "Sodium",
+  weight = "Weight",
+  hdl = "HDL",
+  mchc = "MCHC",
+  bun = "BUN",
+  chloride = "Chloride",
+  systolic_bp = "Systolic BP",
+  raceAsian = "Race: Asian",
+  heart_rate = "Heart Rate",
+  creatinine = "Creatinine",
+  `ethnicityNon-Hispanic/Latino` = "Ethnicity: Non-Hispanic",
+  co2 = "CO₂",
+  triglyceride = "Triglyceride",
+  calcium = "Calcium",
+  hemoglobin = "Hemoglobin",
+  rdw = "RDW",
+  `raceAI/AN` = "Race: AI/AN",
+  bmi_calc = "BMI",
+  potassium = "Potassium",
+  mcv = "MCV",
+  protein = "Protein",
+  diastolic_bp = "Diastolic BP",
+  raceMultiracial = "Race: Multiracial",
+  age_at_diabetes_diagnosis = "Age at Diagnosis",
+  alk_phosphatase = "ALP",
+  `raceB/African` = "Race: Black/African American",
+  temperature = "Temperature"
+)
+
+# Clean and prepare data
+plot_data <- significant_vars %>%
+  mutate(
+    pretty_term = pretty_names[term],
+    pretty_term = ifelse(is.na(pretty_term), term, pretty_term),
+    significance = ifelse(p.value < 0.05, "Significant", "Not Significant")
+  )
+
+# Plot
+ggplot(plot_data, aes(x = reorder(pretty_term, estimate), y = estimate)) +
+  geom_point(aes(color = significance), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = significance), width = 0.2, linewidth = 1.7) +
+  scale_y_log10() +
+  coord_flip() +
+  labs(
+    title = "Significant Predictors of Outcome (Univariate LR)",
+    x = NULL,
+    y = "Odds Ratio (95% CI)"
+  ) +
+  scale_color_manual(values = c("Significant" = "darkmagenta", "Not Significant" = "gray")) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(face = "bold", size = 32, hjust = 0.5),
+    axis.text.y = element_text(face = "bold", size = 20),
+    axis.text.x = element_text(size = 28),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 25)
+  )
+ggsave("Univariate_Odds_Ratio.svg", width = 40, height = 29, units = "cm", dpi=300)
+```
+
+Some variables are at high risk of multi-collinearity;Drop some and retain some.
+
+```{r, warning = FALSE, message=FALSE}
+# Define variables to drop
+vars_to_drop <- c(
+  "hemoglobin", "glucose", "hip_circumference", "height", "ast",
+  "weight", "mch", "bun", "diabetic_neuropathy", "diabetes", "ethnicity",
+  "person_id", "diabetes_onset_date", "diabetic_neuropathy_onset_date", "total_cholesterol"
+) 
+```
+
+Multivariate analysis using significant variables from the univariate analysis
+
+```{r, warning = FALSE, message=FALSE}
+# Get names of significant variables from univariate analysis
+significant_vars <- univariate_df %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value)
+
+selected_predictors <- significant_vars$predictor
+
+# Keep only significant variables that are NOT in the vars_to_drop list
+final_predictors <- setdiff(selected_predictors, vars_to_drop)
+
+# Create the multivariate formula
+logit_formula <- as.formula(
+  paste("diabetic_neuropathy_binary ~", paste(final_predictors, collapse = " + "))
+)
+
+# Fit logistic regression
+logit_model_mv <- glm(logit_formula, data = diabetes_data, family = "binomial")
+
+# Calculate the Confidence intervals and export the results
+# Summarize and export the model
+logit_summary_DN <- tidy(logit_model_mv, exponentiate = TRUE, conf.int = TRUE)
+
+#write_xlsx(logit_summary_DN, "DB_logistic_multivmodel_results_selected_sig_vars.xlsx")
+```
+
+
+Check the number of rows used in the final multivariate model
+
+```{r}
+nobs(logit_model_mv)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
