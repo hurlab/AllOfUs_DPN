@@ -1,7 +1,7 @@
 # AllOfUs_DPN
 A project to identify relevant clinical factors associated with diabetic peripheral neuropathy using the All of Us Research data.
 
-## Title: Risk Factors Associated with Diabetic Peripheral Neuropathy in the All of Us Program
+## Title: Risk Factors for Diabetic Peripheral Neuropathy in a Large, Diverse U.S. Cohort from the All of Us Research Program
 ## Authors
 Christianah Jemiyo, Brett A. McGregor, and Junguk Hur<br>
 Department of Biomedical Sciences, University of North Dakota School of Medicine and Health Sciences, Grand Forks, North Dakota
